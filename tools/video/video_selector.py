@@ -249,6 +249,10 @@ class VideoSelector(BaseTool):
             candidates = [tool for tool in candidates if tool.provider in allowed]
         candidates = self._filter_candidates(inputs, candidates)
 
+        env_preferred = os.environ.get("OM_VIDEO_PREFERRED_PROVIDER", "").strip().lower()
+        if preferred == "auto" and env_preferred:
+            preferred = env_preferred
+
         env_hint = os.environ.get("VIDEO_GEN_LOCAL_MODEL", "").lower()
         env_map = {
             "wan2.1-1.3b": "wan",

@@ -94,3 +94,7 @@ remotion-composer/public/demo-props/caption-burn-*
 
 venv/
 .venv/
+
+.serena/
+.gitnexus/
+.tokensave

@@ -1,18 +1,24 @@
-PYTHON ?= python3
+PYTHON ?= .venv/bin/python
+UV     ?= uv
 
 .PHONY: setup install install-dev install-gpu test test-contracts lint clean preflight demo demo-list hyperframes-doctor hyperframes-warm
 
+# ---- Virtual environment ----
+
+.venv/bin/python:
+	@test -d .venv || $(UV) venv --python python3
+
 # ---- One-command setup ----
 
-setup:
+setup: .venv/bin/python
 	@echo "==> Installing Python dependencies..."
-	$(PYTHON) -m pip install -r requirements.txt
+	$(UV) pip install -r requirements.txt
 	@echo ""
 	@echo "==> Installing Remotion composer..."
 	cd remotion-composer && npm install
 	@echo ""
 	@echo "==> Installing free offline TTS (Piper)..."
-	$(PYTHON) -m pip install piper-tts || echo "  [skip] piper-tts install failed — TTS will use cloud providers instead"
+	$(UV) pip install piper-tts || echo "  [skip] piper-tts install failed — TTS will use cloud providers instead"
 	@echo ""
 	@echo "==> Installing HyperFrames runtime (cache-warm via npx)..."
 	@echo "    Pulls the 'hyperframes' npm package into the local npx cache so the"
@@ -30,15 +36,15 @@ setup:
 
 # ---- Individual installs ----
 
-install:
-	$(PYTHON) -m pip install -r requirements.txt
+install: .venv/bin/python
+	$(UV) pip install -r requirements.txt
 
-install-dev:
-	$(PYTHON) -m pip install -r requirements-dev.txt
+install-dev: .venv/bin/python
+	$(UV) pip install -r requirements-dev.txt
 
-install-gpu:
-	$(PYTHON) -m pip install -r requirements-gpu.txt
-	$(PYTHON) -m pip install diffusers transformers accelerate
+install-gpu: .venv/bin/python
+	$(UV) pip install -r requirements-gpu.txt
+	$(UV) pip install diffusers transformers accelerate
 
 # ---- Testing ----
 

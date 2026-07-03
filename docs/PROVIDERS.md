@@ -36,7 +36,7 @@ PIXABAY_API_KEY=             # Stock photos + videos
 GOOGLE_API_KEY=              # Google TTS + Google Imagen
 
 # VOICE + MUSIC
-ELEVENLABS_API_KEY=          # TTS, music, sound effects (10K chars/month free)
+ELEVENLABS_API_KEY=          # TTS + optional music fallback (10K chars/month free)
 OPENAI_API_KEY=              # OpenAI TTS + DALL-E 3 images
 XAI_API_KEY=                 # xAI Grok image generation/editing + Grok video generation
 DOUBAO_SPEECH_API_KEY=       # Volcengine Doubao Speech TTS (strong Mandarin narration)
@@ -48,11 +48,48 @@ FAL_KEY=                     # FLUX, Recraft, Kling, Veo, MiniMax video
 # VIDEO
 HEYGEN_API_KEY=              # HeyGen avatar video gateway
 RUNWAY_API_KEY=              # Runway Gen-4 video (direct)
+OPENROUTER_API_KEY=          # OpenRouter video gateway
+OPENROUTER_BASE_URL=         # optional, default https://openrouter.ai/api/v1
+OM_VIDEO_OPENROUTER_MODEL=   # default bytedance/seedance-2.0
+OM_VIDEO_OPENROUTER_COST_PER_SECOND=  # optional cost hint for planning
+OM_VIDEO_PREFERRED_PROVIDER= # optional selector default, e.g. openrouter
 SUNO_API_KEY=                # Suno music generation
 
 # LOCAL (no keys needed — just GPU + install)
 VIDEO_GEN_LOCAL_ENABLED=     # Set to "true" for local video gen
 VIDEO_GEN_LOCAL_MODEL=       # wan2.1-1.3b, wan2.1-14b, hunyuan-1.5, ltx2-local, cogvideo-5b
+
+# LOCAL MUSIC (capability-named envs, future backend swaps without code edits)
+OM_MUSIC_PROVIDER=           # songgeneration_mlx | omlx | elevenlabs
+OM_MUSIC_SCRIPT_PATH=        # optional local script path
+OM_MUSIC_SONGGEN_REPO=       # optional local SongGeneration-MLX repo
+OM_MUSIC_DECODER_PYTHON=     # optional decoder venv python
+OM_MUSIC_OFFICIAL_REPO=      # optional official SongGeneration repo path
+OM_MUSIC_DECODER_DEVICE=     # optional, default mps
+OM_MUSIC_GEN_TYPE=           # optional, default bgm
+OM_MUSIC_TOP_K=              # optional, default 50
+OM_MUSIC_TEMPERATURE=        # optional, default 0.9
+OM_MUSIC_MODEL_PATH=         # optional explicit local model dir
+OM_MUSIC_MODEL=              # default SongGeneration-v2-medium
+OM_MUSIC_BASE_URL=           # optional legacy omlx gateway, e.g. http://<host>:8999/v1
+OM_MUSIC_API_KEY=            # optional legacy omlx gateway key
+OM_MUSIC_ENDPOINT=           # optional legacy endpoint override, default /music
+OM_MUSIC_RESPONSE_FORMAT=    # optional, local default flac
+OM_MUSIC_TIMEOUT_SECONDS=    # optional timeout for local or HTTP backend
+OM_MUSIC_COST_PER_SECOND=    # optional cost hint for planning
+
+# LOCAL TTS (capability-named envs, local Python execution)
+OM_TTS_PROVIDER=             # omnivoice
+OM_TTS_MODEL=                # default mlx-community/OmniVoice-bf16
+OM_TTS_LANGUAGE=             # default zh
+OM_TTS_INSTRUCT=             # optional voice-design prompt
+OM_TTS_REF_AUDIO=            # optional: local reference audio path for voice cloning
+OM_TTS_REF_TEXT=             # optional: transcript of OM_TTS_REF_AUDIO
+OM_TTS_MEMORY_LIMIT_GB=      # optional MLX Metal memory cap
+OM_TTS_CACHE_LIMIT_GB=       # optional MLX Metal cache cap
+OM_IMAGE_BASE_URL=           # e.g. https://www.packyapi.com/v1
+OM_IMAGE_API_KEY=            # required by most gateways
+OM_IMAGE_MODEL=              # e.g. gpt-image-2
 ```
 
 ---
@@ -135,10 +172,10 @@ No subscription — pure pay-as-you-go, no minimum spend.
 
 ### ElevenLabs — Voice, Music, Sound Effects
 
-> **Premium voice quality.** Best TTS for narration-heavy videos. Also generates music and sound effects.
+> **Premium voice quality.** Best TTS for narration-heavy videos. Can also act as the fallback backend for `music_gen` when you explicitly route music generation to ElevenLabs.
 
-**Tools unlocked:** `elevenlabs_tts`, `music_gen`
-**Env var:** `ELEVENLABS_API_KEY`
+**Tools unlocked:** `elevenlabs_tts`
+**Env var:** `ELEVENLABS_API_KEY` (plus `OM_MUSIC_PROVIDER=elevenlabs` if you want `music_gen` to use it)
 
 #### Setup
 
@@ -158,6 +195,63 @@ No subscription — pure pay-as-you-go, no minimum spend.
 | Scale | $330/mo | 2,000,000 | Priority support |
 
 **Free tier:** 10,000 characters/month (roughly 2-3 minutes of narration). API access included. Music generation and sound effects also available on free tier with limited credits.
+
+---
+
+### Local Music — SongGeneration-MLX Script
+
+> **Default music path in the current codebase.** `music_gen` now prefers a local SongGeneration-MLX script that generates tokens with MLX and decodes them in a separate PyTorch process, which reduces long-lived shared GPU/MPS pressure.
+
+**Tool unlocked:** `music_gen`
+**Env vars:** `OM_MUSIC_PROVIDER`, `OM_MUSIC_SCRIPT_PATH`, `OM_MUSIC_MODEL`, `OM_MUSIC_MODEL_PATH`
+
+#### Recommended setup
+
+```bash
+OM_MUSIC_PROVIDER=songgeneration_mlx
+OM_MUSIC_SCRIPT_PATH=/Users/buffi/Documents/hf/repo/common-test/src/song/generate_songgeneration_mlx.sh
+OM_MUSIC_MODEL=SongGeneration-v2-medium
+OM_MUSIC_RESPONSE_FORMAT=flac
+```
+
+Optional local overrides:
+
+```bash
+OM_MUSIC_SONGGEN_REPO=/path/to/SongGeneration-MLX
+OM_MUSIC_DECODER_PYTHON=/path/to/.venv-decoder312/bin/python
+OM_MUSIC_OFFICIAL_REPO=/path/to/SongGeneration
+OM_MUSIC_DECODER_DEVICE=mps
+OM_MUSIC_GEN_TYPE=bgm
+OM_MUSIC_TOP_K=50
+OM_MUSIC_TEMPERATURE=0.9
+OM_MUSIC_TIMEOUT_SECONDS=1200
+OM_MUSIC_COST_PER_SECOND=0
+```
+
+#### Why this shape
+
+The env vars are named after the **capability** (`OM_MUSIC_*`), not the vendor. If you later swap SongGeneration-MLX for another local script or gateway, you keep calling `music_gen` and only change `.env`.
+
+#### Legacy local gateway
+
+If you still want the old local HTTP path, set:
+
+```bash
+OM_MUSIC_PROVIDER=omlx
+OM_MUSIC_BASE_URL=http://<host>:8999/v1
+OM_MUSIC_API_KEY=your-local-key
+```
+
+#### Cloud fallback
+
+If you want the old cloud behavior, set:
+
+```bash
+OM_MUSIC_PROVIDER=elevenlabs
+ELEVENLABS_API_KEY=...
+```
+
+That preserves the same `music_gen` entrypoint while moving the actual backend choice into configuration.
 
 ---
 
@@ -310,6 +404,66 @@ Google TTS offers 700+ voices across 50+ languages. Voice names follow the patte
 
 ---
 
+### Local TTS (Python Backends) + OpenAI-Compatible Image
+
+> **TTS no longer goes through an OpenAI-compatible HTTP gateway.** `local_tts` runs Python locally and currently targets `mlx-community/OmniVoice-bf16` through `mlx-audio`. The TTS env vars are still capability-named (`OM_TTS_*`) so a future local backend swap remains a config change, not a selector-call-site change. `openai_compatible_image` stays as the generic OpenAI-shaped image gateway.
+
+**Tools unlocked:** `local_tts` (`capability=tts`), `openai_compatible_image` (`capability=image_generation`)
+**Provider names:** `local_python` (TTS), `openai_compatible` (image)
+**Env vars:** `OM_TTS_PROVIDER` / `OM_TTS_MODEL` / `OM_TTS_LANGUAGE` / `OM_TTS_INSTRUCT` / `OM_TTS_REF_AUDIO` / `OM_TTS_REF_TEXT` / `OM_TTS_MEMORY_LIMIT_GB` / `OM_TTS_CACHE_LIMIT_GB` / `OM_TTS_COST_PER_CHAR` (TTS); `OM_IMAGE_BASE_URL` / `OM_IMAGE_API_KEY` / `OM_IMAGE_MODEL` / `OM_IMAGE_COST_PER_IMAGE` (image)
+
+Source: `tools/audio/local_tts.py`, `tools/graphics/openai_compatible_image.py`.
+
+#### Why this exists
+
+For TTS, the real requirement is "local Python execution with capability-named config", not "HTTP compatibility". Keeping `OM_TTS_*` capability-named preserves the future swap story while removing the now-defunct gateway dependency. For images, the OpenAI-compatible gateway pattern is still useful because the image side is genuinely HTTP-based.
+
+If you need to run two different local TTS backends at once, copy the tool file and use a different env prefix (e.g. `OM_TTS_2_*`). That's still a deliberate choice over a config-driven multi-profile registry — simple copy-paste beats a generic profile system until there's a real need for 3+ simultaneous local profiles.
+
+#### TTS setup — example: OmniVoice via mlx-audio (local)
+
+1. Install the local runtime on Apple Silicon:
+   ```bash
+   pip install -r requirements-gpu.txt
+   ```
+2. Add to `.env`:
+   ```bash
+   OM_TTS_PROVIDER=omnivoice
+   OM_TTS_MODEL=mlx-community/OmniVoice-bf16
+   OM_TTS_LANGUAGE=zh
+   OM_TTS_INSTRUCT=female, young adult
+   OM_TTS_REF_AUDIO=/path/on/this/machine/speaker.wav
+   OM_TTS_REF_TEXT=参考音频对应的文字稿
+   ```
+
+**Important:** OmniVoice does not use fixed `voice_id` names like `alloy` or `echo`. You have three practical modes: auto voice, voice design through `OM_TTS_INSTRUCT` / `instructions`, and voice cloning through `OM_TTS_REF_AUDIO` + optional `OM_TTS_REF_TEXT`. `ref_audio` is read from the **OpenMontage machine's local filesystem**, not a remote server path. The tool loads the model lazily for the call and clears MLX cache after generation to release memory.
+
+#### Image setup — example: packyapi (gpt-image-2, remote)
+
+```bash
+OM_IMAGE_BASE_URL=https://www.packyapi.com/v1
+OM_IMAGE_API_KEY=your-packyapi-key
+OM_IMAGE_MODEL=gpt-image-2
+```
+
+#### Pricing
+
+Unknown/varies by backend — the tool does not hardcode a price table. `estimate_cost()` returns `0.0` unless you set `OM_TTS_COST_PER_CHAR` (USD per character) or `OM_IMAGE_COST_PER_IMAGE` (USD per image), which the agent will then use for planning-stage cost estimates. Update these once you know the real rate for your backend.
+
+#### What it's best for
+
+- Local Apple Silicon TTS with OmniVoice and future Python-backend swaps
+- Third-party API resellers/gateways that wrap another vendor's model behind the OpenAI shape (e.g. gpt-image-2 via packyapi)
+- Any future provider swap — change the `.env` values, not the code
+
+#### Not good for
+
+- Non-Apple Silicon machines without MLX support on the TTS side
+- Backends that don't implement the OpenAI `/v1/images/generations` request/response shape on the image side (write a dedicated tool instead)
+- Getting an accurate cost estimate out of the box (no default price table — set the `_COST_PER_*` env var)
+
+---
+
 ### Runway — Gen-3/Gen-4 Video
 
 > **Highest-rated AI video quality.** #1 on Elo rankings. Professional-grade video generation with Gen-3 Alpha Turbo, Gen-4 Turbo, and Gen-4 Aleph models.
@@ -342,6 +496,42 @@ Google TTS offers 700+ voices across 50+ languages. Voice names follow the patte
 | Gen-4 Aleph | ~$0.15 |
 
 **Free tier:** 125 one-time credits (no monthly renewal). Enough for about 5 seconds of Gen-4 video. API access requires a paid subscription.
+
+---
+
+### OpenRouter — Video Gateway
+
+> **Gateway-first video routing.** `openrouter_video` gives OpenMontage a dedicated OpenRouter-backed video provider while keeping the model configurable. The current default model is `bytedance/seedance-2.0`.
+
+**Tool unlocked:** `openrouter_video`
+**Env vars:** `OPENROUTER_API_KEY`, `OM_VIDEO_OPENROUTER_MODEL`
+
+#### Setup
+
+1. Create an OpenRouter API key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys)
+2. Add to `.env`:
+   ```bash
+   OPENROUTER_API_KEY=sk-or-...
+   OM_VIDEO_OPENROUTER_MODEL=bytedance/seedance-2.0
+   OM_VIDEO_PREFERRED_PROVIDER=openrouter   # optional: make video_selector prefer it
+   ```
+
+Optional overrides:
+
+```bash
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OM_VIDEO_OPENROUTER_COST_PER_SECOND=0
+```
+
+#### Why this exists
+
+This keeps `video_selector` generic. OpenRouter-specific API handling lives in a concrete provider tool, and future model changes become config edits instead of selector edits.
+
+#### Best for
+
+- Teams standardizing on a single gateway key
+- Seedance 2.0 through OpenRouter
+- Future video-model swaps without code changes
 
 ---
 
@@ -723,9 +913,13 @@ These tools require only FFmpeg or Python packages — no GPU, no API key.
 | **Pixabay** | `PIXABAY_API_KEY` | `pixabay_image`, `pixabay_video` | Free |
 | **Piper** | — (install only) | `piper_tts` | Free |
 | **Google** | `GOOGLE_API_KEY` | `google_tts`, `google_imagen` | Free tier + paid |
-| **ElevenLabs** | `ELEVENLABS_API_KEY` | `elevenlabs_tts`, `music_gen` | Free tier + paid |
+| **ElevenLabs** | `ELEVENLABS_API_KEY` | `elevenlabs_tts` | Free tier + paid |
 | **fal.ai** | `FAL_KEY` | `flux_image`, `recraft_image`, `kling_video`, `veo_video`, `minimax_video` | Pay-as-you-go |
 | **OpenAI** | `OPENAI_API_KEY` | `openai_tts`, `openai_image` | Paid only |
+| **Local TTS (OmniVoice)** | `OM_TTS_PROVIDER` / `OM_TTS_MODEL` (+ related `OM_TTS_*` vars) | `local_tts` | Usually free/local |
+| **OpenAI-Compatible Image** | `OM_IMAGE_BASE_URL` (+ related `OM_IMAGE_*` vars) | `openai_compatible_image` | Varies by backend — set `OM_IMAGE_COST_PER_IMAGE` |
+| **OpenRouter** | `OPENROUTER_API_KEY` | `openrouter_video` | Pay-as-you-go |
+| **Local Music (omlx)** | `OM_MUSIC_BASE_URL` + related `OM_MUSIC_*` vars | `music_gen` | Usually free/local |
 | **xAI** | `XAI_API_KEY` | `grok_image`, `grok_video` | Paid only |
 | **Runway** | `RUNWAY_API_KEY` | `runway_video` | Free trial + paid |
 | **Higgsfield** | `HIGGSFIELD_API_KEY` + `HIGGSFIELD_API_SECRET` | `higgsfield_video` | Subscription ($15-84/mo) |
@@ -743,10 +937,10 @@ How many providers cover each capability:
 
 | Capability | Cloud Providers | Local Providers | Free Options |
 |-----------|----------------|-----------------|--------------|
-| **Image Generation** | FLUX, Grok, Google Imagen, DALL-E 3, Recraft | Local Diffusion | Pexels, Pixabay (stock) |
-| **Video Generation** | Grok, Kling, Runway, Veo, Higgsfield, MiniMax, HeyGen | WAN, Hunyuan, CogVideo, LTX | Pexels, Pixabay (stock) |
-| **Text-to-Speech** | ElevenLabs, Google TTS, OpenAI | Piper | Piper, Google free tier, ElevenLabs free tier |
-| **Music Generation** | ElevenLabs, Suno | — | ElevenLabs free tier |
+| **Image Generation** | FLUX, Grok, Google Imagen, DALL-E 3, Recraft, OpenAI-Compatible (generic) | Local Diffusion | Pexels, Pixabay (stock) |
+| **Video Generation** | Grok, Kling, Runway, Veo, Higgsfield, HeyGen, OpenRouter, MiniMax | WAN, Hunyuan, CogVideo, LTX | Pexels, Pixabay (stock) |
+| **Text-to-Speech** | ElevenLabs, Google TTS, OpenAI | Local TTS (OmniVoice), Piper | Local OmniVoice, Piper, Google free tier, ElevenLabs free tier |
+| **Music Generation** | ElevenLabs, Suno | omlx SongGeneration (`music_gen`) | Local `omlx`, ElevenLabs free tier |
 | **Post-Production** | — | FFmpeg (compose, stitch, trim, mix, enhance, grade) | All free |
 | **Analysis** | — | WhisperX, Scene Detect, Frame Sampler, CLIP/BLIP-2 | All free |
 | **Enhancement** | — | Upscale, BG Remove, Face Enhance, Face Restore | All free |

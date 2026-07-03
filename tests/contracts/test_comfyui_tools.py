@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from lib.scoring import ProviderScore
 from tools.base_tool import (
     BaseTool,
     ToolRuntime,
@@ -543,6 +544,52 @@ class TestVideoOperationReadiness:
 
         assert rank_inputs["operation"] == "image_to_video"
         assert selector._filter_candidates(rank_inputs, candidates) == []
+
+    def test_video_selector_respects_env_preferred_provider(self, monkeypatch):
+        class PreferredVideoTool(BaseTool):
+            name = "preferred_video"
+            capability = "video_generation"
+            provider = "openrouter"
+            supports = {"text_to_video": True}
+            input_schema = {"type": "object", "properties": {}}
+
+            def get_status(self):
+                return ToolStatus.AVAILABLE
+
+            def execute(self, inputs):
+                raise AssertionError("not used")
+
+        class HigherScoredVideoTool(BaseTool):
+            name = "higher_scored_video"
+            capability = "video_generation"
+            provider = "other"
+            supports = {"text_to_video": True}
+            input_schema = {"type": "object", "properties": {}}
+
+            def get_status(self):
+                return ToolStatus.AVAILABLE
+
+            def execute(self, inputs):
+                raise AssertionError("not used")
+
+        monkeypatch.setenv("OM_VIDEO_PREFERRED_PROVIDER", "openrouter")
+        monkeypatch.setattr(
+            "lib.scoring.rank_providers",
+            lambda candidates, ctx: [
+                ProviderScore(tool_name="higher_scored_video", provider="other", task_fit=1.0),
+                ProviderScore(tool_name="preferred_video", provider="openrouter", task_fit=0.1),
+            ],
+        )
+
+        selector = VideoSelector()
+        tool, _ = selector._select_best_tool(
+            {"prompt": "x", "operation": "text_to_video"},
+            [PreferredVideoTool(), HigherScoredVideoTool()],
+            {"capability": "video_generation", "operation": "text_to_video"},
+        )
+
+        assert tool is not None
+        assert tool.provider == "openrouter"
 
 
 # ------------------------------------------------------------------

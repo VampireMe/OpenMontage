@@ -27,9 +27,13 @@ from tools.base_tool import ToolTier
 from tools.audio.music_gen import MusicGen
 from tools.tool_registry import ToolRegistry
 from tools.audio.elevenlabs_tts import ElevenLabsTTS
+from tools.audio.local_tts import LocalTTS
 from tools.audio.openai_tts import OpenAITTS
 from tools.audio.piper_tts import PiperTTS
 from tools.audio.tts_selector import TTSSelector
+from tools.audio.doubao_tts import DoubaoTTS
+from tools.audio.google_tts import GoogleTTS
+from tools.video.openrouter_video import OpenRouterVideo
 
 
 # ---- TTS Provider Tools ----
@@ -74,14 +78,37 @@ class TestPiperTTS:
         assert "offline_generation" in tool.capabilities
 
 
+class TestLocalTTS:
+    def test_identity(self):
+        tool = LocalTTS()
+        info = tool.get_info()
+        assert info["name"] == "local_tts"
+        assert info["tier"] == "voice"
+        assert info["capability"] == "tts"
+        assert info["provider"] == "local_python"
+
+    def test_backend_defaults_to_omnivoice(self, monkeypatch):
+        monkeypatch.delenv("OM_TTS_PROVIDER", raising=False)
+        tool = LocalTTS()
+        assert tool._backend_name() == "omnivoice"
+
+    def test_cost_estimate_uses_optional_env_hint(self, monkeypatch):
+        monkeypatch.setenv("OM_TTS_COST_PER_CHAR", "0.01")
+        tool = LocalTTS()
+        assert tool.estimate_cost({"text": "abc"}) == 0.03
+
+
 class TestMusicGen:
     def test_identity(self):
         tool = MusicGen()
         info = tool.get_info()
         assert info["name"] == "music_gen"
         assert info["tier"] == "generate"
+        assert info["provider"] == "songgeneration_mlx"
 
-    def test_cost_estimate_scales_with_duration(self):
+    def test_cost_estimate_scales_with_duration(self, monkeypatch):
+        monkeypatch.setenv("OM_MUSIC_PROVIDER", "songgeneration_mlx")
+        monkeypatch.setenv("OM_MUSIC_COST_PER_SECOND", "0.01")
         tool = MusicGen()
         cost_30 = tool.estimate_cost({"prompt": "ambient", "duration_seconds": 30})
         cost_60 = tool.estimate_cost({"prompt": "ambient", "duration_seconds": 60})
@@ -91,24 +118,64 @@ class TestMusicGen:
         tool = MusicGen()
         assert "generate_background_music" in tool.capabilities
 
+    def test_normalizes_local_backend_alias(self, monkeypatch):
+        monkeypatch.setenv("OM_MUSIC_PROVIDER", "local")
+        tool = MusicGen()
+        assert tool._backend_name() == "songgeneration_mlx"
+
+    def test_requires_lyrics_for_vocal_modes(self):
+        tool = MusicGen()
+        with pytest.raises(ValueError, match="必须显式提供 lyrics"):
+            tool._resolve_lyrics({}, 12, "vocal")
+
+    def test_builds_default_instrumental_lyrics_for_bgm(self):
+        tool = MusicGen()
+        lyrics, source = tool._resolve_lyrics({}, 18, "bgm")
+        assert source == "instrumental_template"
+        assert "[intro-short]" in lyrics
+        assert "[outro-short]" in lyrics
+
+    def test_prefers_omlx_backend_when_configured(self, monkeypatch):
+        monkeypatch.setenv("OM_MUSIC_BASE_URL", "http://127.0.0.1:8999/v1")
+        monkeypatch.setenv("OM_MUSIC_API_KEY", "local-key")
+        monkeypatch.delenv("OM_MUSIC_PROVIDER", raising=False)
+        tool = MusicGen()
+        assert tool.get_status().value == "available"
+        assert tool._backend_name() == "omlx"
+
+
+class TestOpenRouterVideo:
+    def test_identity(self):
+        tool = OpenRouterVideo()
+        info = tool.get_info()
+        assert info["name"] == "openrouter_video"
+        assert info["provider"] == "openrouter"
+        assert info["capability"] == "video_generation"
+
+    def test_status_requires_api_key(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        assert OpenRouterVideo().get_status().value == "available"
+
 
 class TestNewToolsRegistry:
     def test_all_register(self):
         reg = ToolRegistry()
         reg.register(ElevenLabsTTS())
+        reg.register(LocalTTS())
         reg.register(PiperTTS())
         reg.register(MusicGen())
-        assert len(reg.list_all()) == 3
+        assert len(reg.list_all()) == 4
 
     def test_voice_tier_tools(self):
         reg = ToolRegistry()
         reg.register(ElevenLabsTTS())
+        reg.register(LocalTTS())
         reg.register(OpenAITTS())
         reg.register(PiperTTS())
         voice_tools = reg.get_by_tier(ToolTier.VOICE)
-        assert len(voice_tools) == 3
+        assert len(voice_tools) == 4
         names = {t.name for t in voice_tools}
-        assert names == {"elevenlabs_tts", "openai_tts", "piper_tts"}
+        assert names == {"elevenlabs_tts", "local_tts", "openai_tts", "piper_tts"}
 
 
 class TestCapabilityMetadata:
@@ -123,12 +190,14 @@ class TestCapabilityMetadata:
 
     def test_provider_specific_tts_tools_register(self):
         reg = ToolRegistry()
+        reg.register(LocalTTS())
         reg.register(ElevenLabsTTS())
         reg.register(OpenAITTS())
         reg.register(PiperTTS())
         reg.register(TTSSelector())
         assert {tool.name for tool in reg.get_by_capability("tts")} == {
             "elevenlabs_tts",
+            "local_tts",
             "openai_tts",
             "piper_tts",
             "tts_selector",
@@ -137,13 +206,17 @@ class TestCapabilityMetadata:
 
     def test_registry_catalog_views(self):
         reg = ToolRegistry()
+        reg.register(DoubaoTTS())
         reg.register(ElevenLabsTTS())
+        reg.register(GoogleTTS())
+        reg.register(LocalTTS())
         reg.register(OpenAITTS())
         reg.register(PiperTTS())
         catalog = reg.capability_catalog()
         assert "tts" in catalog
         providers = {item["provider"] for item in catalog["tts"] if item["provider"] != "selector"}
-        assert providers == {"doubao", "elevenlabs", "google_tts", "openai", "piper"}
+        assert {"doubao", "elevenlabs", "google_tts", "piper"}.issubset(providers)
+        assert "local_python" in providers
 
 
 # ---- Animated Explainer Pipeline ----
