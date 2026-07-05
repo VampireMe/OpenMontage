@@ -23,6 +23,20 @@ For each scene in the scene plan:
 2. Find the matching narration audio (by script section)
 3. Note the scene's timing (`start_seconds`, `end_seconds`)
 
+**Missing visual assets — do NOT silently substitute `text_card`:**
+If a scene's `type` is motion-led (`animation`, `talking_head`, `screen_demo`,
+`cinematic`, etc.) but the asset manifest has no image or video asset for that
+`scene_id`, this is a blocker, not a fallback. Do NOT map the scene to a
+`text_card` placeholder to make the EDL look complete — that silently downgrades
+the visual promise and the reviewer's `text_card_ratio` check will flag it as a
+silent downgrade. Instead:
+1. Stop and surface the gap (which scenes are missing which asset types).
+2. Route back to the asset stage to generate the missing assets using the
+   configured providers (`image_selector`, `video_selector`).
+3. Only proceed once every motion-led scene has a real visual asset, or the
+   user has explicitly approved a `text_card` animatic for specific scenes and
+   that decision is logged in `decision_log`.
+
 Build a timeline map:
 ```
 0s-10s: scene-1 (talking_head) | narration-s1 | img-intro.png

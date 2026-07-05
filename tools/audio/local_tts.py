@@ -56,6 +56,17 @@ _LANGUAGE_ALIASES = {
     "japanese": "ja",
 }
 
+# OmniVoice (flow-matching TTS) mispronounces, drops, or hallucinates characters
+# on long multi-sentence input. Splitting narration into short segments and
+# concatenating with inter-segment pauses keeps quality high (short sentences
+# synthesize correctly) and restores natural rhythm. See voice-performance-
+# director.md "Offline/basic voices" guidance.
+_SENTENCE_END_PUNCT = "。！？!?；;"
+_COMMA_PUNCT = "，,"
+_MAX_SEGMENT_CHARS = 40
+_PAUSE_AFTER_SENTENCE_END_S = 0.4
+_PAUSE_AFTER_COMMA_S = 0.2
+
 
 class LocalTTS(BaseTool):
     name = "local_tts"
@@ -151,7 +162,7 @@ class LocalTTS(BaseTool):
             "duration_seconds": {
                 "type": "number",
                 "minimum": 0.1,
-                "description": "Optional target duration upper bound in seconds.",
+                "description": "Deprecated — ignored. OmniVoice inherits pacing from the reference audio via voice cloning; forcing a duration compresses speech and breaks pacing. Kept for schema compatibility.",
             },
             "num_steps": {
                 "type": "integer",
@@ -326,44 +337,77 @@ class LocalTTS(BaseTool):
                     ),
                 )
 
-            result = next(
-                model.generate(
-                    text=text,
-                    duration_s=self._resolve_optional_duration(inputs),
-                    language=self._resolve_language(inputs),
-                    instruct=self._resolve_instruct(inputs),
-                    ref_text=ref_text,
-                    ref_tokens=ref_tokens,
-                    num_steps=self._resolve_int(inputs, "num_steps", "OM_TTS_NUM_STEPS", _DEFAULT_NUM_STEPS),
-                    guidance_scale=self._resolve_float(
-                        inputs,
-                        "guidance_scale",
-                        "OM_TTS_GUIDANCE_SCALE",
-                        _DEFAULT_GUIDANCE_SCALE,
-                    ),
-                )
+            language = self._resolve_language(inputs)
+            instruct = self._resolve_instruct(inputs)
+            num_steps = self._resolve_int(inputs, "num_steps", "OM_TTS_NUM_STEPS", _DEFAULT_NUM_STEPS)
+            guidance_scale = self._resolve_float(
+                inputs, "guidance_scale", "OM_TTS_GUIDANCE_SCALE", _DEFAULT_GUIDANCE_SCALE,
             )
 
-            audio = np.asarray(result.audio)
-            if not np.any(audio):
-                raise RuntimeError(
-                    "OmniVoice 生成了静音音频。"
-                    f"诊断: num_steps={self._resolve_int(inputs, 'num_steps', 'OM_TTS_NUM_STEPS', _DEFAULT_NUM_STEPS)}, "
-                    f"guidance_scale={self._resolve_float(inputs, 'guidance_scale', 'OM_TTS_GUIDANCE_SCALE', _DEFAULT_GUIDANCE_SCALE)}, "
-                    f"audio_tokenizer_loaded={getattr(model, 'audio_tokenizer', None) is not None}, "
-                    f"peak_memory_gb={getattr(result, 'peak_memory_usage', 'n/a')}, "
-                    f"real_time_factor={getattr(result, 'real_time_factor', 'n/a')}. "
-                    "可能原因: audio tokenizer 未正确加载、num_steps 过低、或 guidance_scale 异常。"
+            segments = self._split_narration_segments(text)
+            result = None
+            peak_memory = 0.0
+            rtf = 0.0
+            if len(segments) <= 1:
+                # Short text: single generate. duration_s is intentionally None —
+                # OmniVoice inherits pacing from the reference audio via voice
+                # cloning; forcing a target length compresses speech and breaks
+                # that pacing. The script's word count should drive scene timing,
+                # not the TTS output duration.
+                single_text = segments[0][0] if segments else text
+                result = next(
+                    model.generate(
+                        text=single_text,
+                        duration_s=None,
+                        language=language,
+                        instruct=instruct,
+                        ref_text=ref_text,
+                        ref_tokens=ref_tokens,
+                        num_steps=num_steps,
+                        guidance_scale=guidance_scale,
+                    )
                 )
+                audio = np.asarray(result.audio)
+                sample_rate = result.sample_rate
+                peak_memory = float(getattr(result, "peak_memory_usage", 0.0))
+                rtf = float(getattr(result, "real_time_factor", 0.0))
+                if not np.any(audio):
+                    raise RuntimeError(
+                        "OmniVoice 生成了静音音频。"
+                        f"诊断: num_steps={num_steps}, guidance_scale={guidance_scale}, "
+                        f"audio_tokenizer_loaded={getattr(model, 'audio_tokenizer', None) is not None}, "
+                        f"peak_memory_gb={peak_memory}, real_time_factor={rtf}. "
+                        "可能原因: audio tokenizer 未正确加载、num_steps 过低、或 guidance_scale 异常。"
+                    )
+            else:
+                # Long/multi-sentence text: generate per segment and concat with
+                # pauses. duration_s is intentionally ignored — forcing a target
+                # length compresses speech and breaks pacing.
+                audio, sample_rate, peak_memory, rtf = self._generate_segmented(
+                    model=model,
+                    segments=segments,
+                    ref_text=ref_text,
+                    ref_tokens=ref_tokens,
+                    language=language,
+                    instruct=instruct,
+                    num_steps=num_steps,
+                    guidance_scale=guidance_scale,
+                )
+                if not np.any(audio):
+                    raise RuntimeError(
+                        "OmniVoice 分段生成产出了静音音频。"
+                        f"诊断: segments={len(segments)}, num_steps={num_steps}, "
+                        f"guidance_scale={guidance_scale}, "
+                        f"audio_tokenizer_loaded={getattr(model, 'audio_tokenizer', None) is not None}."
+                    )
 
-            self._save_wave(temp_wav_path, audio, result.sample_rate)
+            self._save_wave(temp_wav_path, audio, sample_rate)
             if requested_format != "wav":
                 self._transcode_audio(temp_wav_path, output_path, requested_format)
             else:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
 
             audio_duration = probe_duration(output_path)
-            instruct = self._resolve_instruct(inputs)
 
             return ToolResult(
                 success=True,
@@ -380,10 +424,11 @@ class LocalTTS(BaseTool):
                     "response_format": requested_format,
                     "format": requested_format,
                     "text_length": len(text),
+                    "segments": len(segments),
                     "audio_duration_seconds": round(audio_duration, 2) if audio_duration else None,
                     "duration_probe_warning": None if audio_duration else "ffprobe unavailable; audio_duration_seconds is None",
-                    "peak_memory_gb": round(float(getattr(result, "peak_memory_usage", 0.0)), 2) or None,
-                    "real_time_factor": round(float(getattr(result, "real_time_factor", 0.0)), 2) or None,
+                    "peak_memory_gb": round(peak_memory, 2) or None,
+                    "real_time_factor": round(rtf, 2) or None,
                     "output": str(output_path),
                 },
                 artifacts=[str(output_path)],
@@ -532,6 +577,84 @@ class LocalTTS(BaseTool):
             mx.reset_peak_memory()
         except Exception:
             pass
+
+    @staticmethod
+    def _split_narration_segments(text: str) -> list[tuple[str, float]]:
+        """Split narration into short TTS segments with trailing pause durations.
+
+        Splits on sentence-ending punctuation, and on commas once a segment grows
+        beyond half the max length. Each entry is (segment_text, pause_seconds).
+        """
+        segments: list[tuple[str, float]] = []
+        current = ""
+        for ch in text:
+            current += ch
+            if ch in _SENTENCE_END_PUNCT:
+                seg = current.strip()
+                if seg:
+                    segments.append((seg, _PAUSE_AFTER_SENTENCE_END_S))
+                current = ""
+            elif ch in _COMMA_PUNCT and len(current) >= _MAX_SEGMENT_CHARS // 2:
+                seg = current.strip()
+                if seg:
+                    segments.append((seg, _PAUSE_AFTER_COMMA_S))
+                current = ""
+        tail = current.strip()
+        if tail:
+            segments.append((tail, 0.0))
+        return segments
+
+    def _generate_segmented(
+        self,
+        *,
+        model: Any,
+        segments: list[tuple[str, float]],
+        ref_text: str | None,
+        ref_tokens: Any,
+        language: str,
+        instruct: str | None,
+        num_steps: int,
+        guidance_scale: float,
+    ) -> tuple[Any, int, float, float]:
+        """Generate each segment separately and concat with inter-segment pauses.
+
+        duration_s is never passed — each segment synthesizes at its natural
+        length, so pacing stays correct instead of being compressed to fit a
+        target duration. Returns (audio, sample_rate, peak_memory_gb, rtf_sum).
+        """
+        import numpy as np
+
+        pieces: list[Any] = []
+        sample_rate = 0
+        peak_memory = 0.0
+        rtf = 0.0
+        for seg_text, pause_after in segments:
+            seg_result = next(
+                model.generate(
+                    text=seg_text,
+                    duration_s=None,
+                    language=language,
+                    instruct=instruct,
+                    ref_text=ref_text,
+                    ref_tokens=ref_tokens,
+                    num_steps=num_steps,
+                    guidance_scale=guidance_scale,
+                )
+            )
+            seg_audio = np.asarray(seg_result.audio)
+            sample_rate = seg_result.sample_rate
+            peak_memory = max(peak_memory, float(getattr(seg_result, "peak_memory_usage", 0.0)))
+            rtf += float(getattr(seg_result, "real_time_factor", 0.0))
+            pieces.append(seg_audio)
+            if pause_after > 0 and sample_rate > 0:
+                silence_len = int(pause_after * sample_rate)
+                if seg_audio.ndim == 1:
+                    silence = np.zeros(silence_len, dtype=seg_audio.dtype)
+                else:
+                    silence = np.zeros((silence_len, seg_audio.shape[1]), dtype=seg_audio.dtype)
+                pieces.append(silence)
+        audio = np.concatenate(pieces, axis=0) if pieces else np.zeros(0, dtype=np.float32)
+        return audio, sample_rate, peak_memory, rtf
 
     @staticmethod
     def _save_wave(output_path: Path, audio: Any, sample_rate: int) -> None:

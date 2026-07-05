@@ -1778,9 +1778,18 @@ class VideoCompose(BaseTool):
         import re
 
         # Preserve hyphenated words as single tokens ("many-worlds" -> "many-worlds").
-        # Drop everything except letters, digits, hyphens, apostrophes.
-        cleaned = re.sub(r"[^A-Za-z0-9\-' ]+", " ", text.lower())
-        return [t for t in cleaned.split() if t and t != "-"]
+        # Drop everything except letters, digits, hyphens, apostrophes, and CJK characters.
+        cleaned = re.sub(r"[^A-Za-z0-9一-鿿\-' ]+", " ", text.lower())
+        tokens = [t for t in cleaned.split() if t and t != "-"]
+        # For CJK text, treat each character as its own token so the set overlap
+        # check works across languages.
+        result: list[str] = []
+        for token in tokens:
+            if all("一" <= c <= "鿿" for c in token):
+                result.extend(token)
+            else:
+                result.append(token)
+        return result
 
     @classmethod
     def _compare_transcript_to_script(
@@ -1809,6 +1818,8 @@ class VideoCompose(BaseTool):
         result: dict[str, Any] = {
             "transcript_matches_script": False,
             "word_accuracy": None,
+            "set_overlap_accuracy": None,
+            "transcript_redundancy": None,
             "script_word_count": 0,
             "transcript_word_count": 0,
             "spurious_punctuation_words": [],
@@ -1870,22 +1881,42 @@ class VideoCompose(BaseTool):
                 f"em-dashes, etc.) and regenerate narration."
             )
 
-        # --- Word accuracy via set overlap (cheap & ordering-insensitive) ---
-        # We don't penalize small word-order differences or minor TTS
-        # hallucinations; we just want to know "did 90%+ of the script's
-        # content make it into the audio." Using set overlap on the script
-        # side is robust to transcription noise.
-        matched = sum(1 for t in script_tokens if t in set(transcript_tokens))
-        accuracy = matched / max(1, len(script_tokens))
-        result["word_accuracy"] = round(accuracy, 3)
-        result["transcript_matches_script"] = accuracy >= 0.9 and not leak_occurrences
+        # --- Word accuracy via ordered alignment (difflib SequenceMatcher) ---
+        # Set overlap is order-insensitive and does not penalize transcript
+        # redundancy (hallucinations, repeats, filler words) — a transcript with
+        # 32% extra garbage still scored 0.94 and passed. SequenceMatcher.ratio()
+        # reflects both ordering and length parity, catching the regressions set
+        # overlap missed.
+        from difflib import SequenceMatcher
 
-        if accuracy < 0.9:
+        transcript_set = set(transcript_tokens)
+        set_matched = sum(1 for t in script_tokens if t in transcript_set)
+        set_accuracy = set_matched / max(1, len(script_tokens))
+        result["set_overlap_accuracy"] = round(set_accuracy, 3)
+
+        matcher = SequenceMatcher(a=script_tokens, b=transcript_tokens, autojunk=False)
+        ordered_accuracy = matcher.ratio()
+        result["word_accuracy"] = round(ordered_accuracy, 3)
+        result["transcript_matches_script"] = ordered_accuracy >= 0.9 and not leak_occurrences
+
+        # --- Transcript redundancy (hallucination / repeat / filler detection) ---
+        len_script = len(script_tokens)
+        len_transcript = len(transcript_tokens)
+        redundancy = max(0.0, len_transcript - len_script) / max(1, len_script)
+        result["transcript_redundancy"] = round(redundancy, 3)
+        if redundancy > 0.20:
             result["issues"].append(
-                f"Low transcript-to-script match: only {accuracy:.0%} of script "
-                f"words appear in the transcribed audio ({matched}/"
-                f"{len(script_tokens)}). Narration may be truncated, mispronounced, "
-                f"or the wrong script was used."
+                f"Transcript has {len_transcript} tokens vs script {len_script} "
+                f"(+{redundancy:.0%} redundancy): likely TTS hallucination, repeats, "
+                f"or filler words. Narration content may be wrong even when "
+                f"word_accuracy is high — investigate before shipping."
+            )
+
+        if ordered_accuracy < 0.9:
+            result["issues"].append(
+                f"Low ordered transcript-to-script match: ratio {ordered_accuracy:.0%} "
+                f"({len_script} script tokens vs {len_transcript} transcript tokens). "
+                f"Narration may be truncated, mispronounced, out-of-order, or wrong."
             )
 
         return result
@@ -2195,6 +2226,35 @@ class VideoCompose(BaseTool):
                 except Exception as e:
                     promise_preservation["issues"].append(
                         f"Could not validate delivery promise: {e}"
+                    )
+
+            # Scene composition: text_card dominance is a silent downgrade.
+            # Catches asset-generation failures that edit silently absorbed as
+            # text_card placeholders — the visual promise is not delivered even
+            # when the render technically succeeds. Independent of
+            # delivery_promise so it fires even when that metadata is absent.
+            cuts = edit_decisions.get("cuts", []) if edit_decisions else []
+            total_cuts = len(cuts)
+            text_card_cuts = sum(
+                1
+                for c in cuts
+                if (c.get("type") == "text_card" or c.get("cut_type") == "text_card")
+                and not c.get("backgroundImage")
+                and not c.get("backgroundVideo")
+                and not c.get("source")
+            )
+            if total_cuts > 0:
+                text_card_ratio = text_card_cuts / total_cuts
+                promise_preservation["text_card_ratio"] = round(text_card_ratio, 3)
+                promise_preservation["text_card_cuts"] = text_card_cuts
+                promise_preservation["total_cuts"] = total_cuts
+                if text_card_ratio > 0.5:
+                    promise_preservation["silent_downgrade_detected"] = True
+                    promise_preservation["issues"].append(
+                        f"{text_card_cuts}/{total_cuts} cuts ({text_card_ratio:.0%}) are "
+                        f"text_card without background image/video — visual assets "
+                        f"are missing and scenes fell back to text placeholders. "
+                        f"The brief's visual promise is not delivered."
                     )
 
         issues.extend(promise_preservation.get("issues", []))

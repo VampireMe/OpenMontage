@@ -57,9 +57,23 @@
             "minimum": 0,
             "description": "Duration of transition in seconds"
           },
-          "reason": { "type": "string" }
+          "reason": { "type": "string" },
+          "type": {
+            "type": "string",
+            "description": "Remotion scene type (e.g. text_card, stat_card, hero_title, anime_scene, bar_chart)"
+          },
+          "text": { "type": "string" },
+          "stat": { "type": "string" },
+          "title": { "type": "string" },
+          "heroSubtitle": { "type": "string" },
+          "backgroundImage": { "type": "string", "description": "Asset ID or file path for background image" },
+          "backgroundVideo": { "type": "string" },
+          "backgroundOverlay": { "type": "number", "minimum": 0, "maximum": 1 },
+          "accentColor": { "type": "string" },
+          "color": { "type": "string" },
+          "fontSize": { "type": "number" }
         },
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "overlays": {
@@ -147,7 +161,19 @@
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
+    },
+    "captions": {
+      "type": "array",
+      "description": "Word-level captions for Remotion CaptionOverlay (word, startMs, endMs)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "word": { "type": "string" },
+          "startMs": { "type": "integer", "minimum": 0 },
+          "endMs": { "type": "integer", "minimum": 0 }
+        }
+      }
     },
     "subtitles": {
       "type": "object",

@@ -63,6 +63,16 @@ Transform each script section into 1-3 visual scenes. Each scene is a distinct v
 }
 ```
 
+**`required_assets` must not be empty for asset-dependent scene types:**
+For `animation`, `generated`, `diagram`, `talking_head`, `broll`, or
+`screen_recording` scenes, `required_assets` MUST list at least one concrete
+asset need (type, description, source). An empty `required_assets` on these
+types means the asset stage has nothing to generate, which forces edit to
+silently fall back to `text_card` — a silent downgrade the reviewer will flag.
+If you intentionally want a zero-dependency Remotion-native scene, use
+`text_card`/`stat_card`/`hero_title` etc. directly and leave `required_assets`
+empty; do not label a scene `animation` and then leave it asset-less.
+
 #### Scene Types and When to Use Them
 
 | Type | Best For | Available Tools | Duration Guidance |
@@ -84,7 +94,16 @@ Transform each script section into 1-3 visual scenes. Each scene is a distinct v
 | `broll` | Context, real-world examples | Stock or generated footage | 3-6s |
 | `screen_recording` | Code demos, UI walkthroughs | Recorded or simulated | 5-15s |
 
-**Zero-key scene selection:** When no image/video generation is available, prefer `hero_title`, `stat_card`, `bar_chart`, `line_chart`, `pie_chart`, `kpi_grid`, `comparison`, `callout`, `progress_bar`, and `text_card`. These render entirely from Remotion components with zero external dependencies and can still feel distinct if you derive color, typography, and pacing from the subject instead of defaulting to a generic dashboard aesthetic.
+**Zero-key scene selection:** ONLY when preflight confirms `image_generation`
+and `video_generation` are both 0/N configured, prefer `hero_title`,
+`stat_card`, `bar_chart`, `line_chart`, `pie_chart`, `kpi_grid`, `comparison`,
+`callout`, `progress_bar`, and `text_card`. These render entirely from Remotion
+components with zero external dependencies and can still feel distinct if you
+derive color, typography, and pacing from the subject instead of defaulting to
+a generic dashboard aesthetic. Do NOT default to this path when image/video
+providers ARE configured — check `provider_menu_summary()` first. A motion-led
+brief degraded to text_card-only scenes because the agent assumed "no
+generation available" without checking is a silent downgrade.
 
 ### Step 4: Apply the Visual Technique Library
 

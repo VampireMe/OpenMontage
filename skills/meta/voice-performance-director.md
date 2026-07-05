@@ -66,8 +66,15 @@ Section-level delivery cues:
 - ElevenLabs: use lower `stability` for more variation, moderate `style` for
   expressiveness, `speed` in the provider's `0.7..1.2` range, and keep
   `similarity_boost` high enough to preserve the voice.
-- Offline/basic voices: rely on punctuation, shorter sentences, and explicit
-  segment splitting because provider-level emotion controls may be unavailable.
+- Offline/basic voices (OmniVoice): OmniVoice is a flow-matching TTS that
+  degrades on long multi-sentence input — it mispronounces, drops, or
+  hallucinates characters past ~40 chars. `local_tts` auto-splits narration
+  on sentence-ending punctuation (。！？；) and commas, generates each segment
+  separately, and concatenates with inter-segment pauses (0.4s after sentence
+  ends, 0.2s after commas). Do NOT pass `duration_seconds` to force a target
+  length — that compresses speech and breaks pacing; let each segment
+  synthesize at its natural length and let the script's word count drive scene
+  timing instead. Verify with a short-sentence sample before batch generation.
 
 ## Sample Gate
 

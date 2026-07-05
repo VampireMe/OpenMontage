@@ -95,7 +95,12 @@ For each script section:
    - ElevenLabs: `stability`, `similarity_boost`, `style`, `speed`, and `use_speaker_boost`
 7. Generate using `tts_selector` — it auto-routes to the best available TTS provider based on user preference and availability. Check the registry's `best_for` fields to understand each provider's strengths.
 8. Record the applied `voice_performance` metadata on each narration asset
-9. Verify the audio file exists and duration matches expected timing (±15%)
+9. Verify the audio file exists. Do NOT force narration duration to match scene
+   timing — for offline TTS (OmniVoice), pacing is inherited from the reference
+   audio via voice cloning and `local_tts` auto-segments long text. The script's
+   word count should drive scene timing, not the TTS output duration. If
+   narration is far off expected (>1.5x or <0.7x), the script likely has too
+   many/few words — revise the script, never compress the audio.
 
 **Pronunciation guide**: If the script contains technical terms, jargon, or names with non-obvious pronunciation, include a pronunciation map in the TTS request.
 

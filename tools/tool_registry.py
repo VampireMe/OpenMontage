@@ -58,6 +58,7 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, BaseTool] = {}
         self._discovered_packages: set[str] = set()
+        self._import_errors: dict[str, str] = {}
 
     def register(self, tool: BaseTool) -> None:
         """Register a tool instance."""
@@ -69,6 +70,7 @@ class ToolRegistry:
         """Clear registered tools and discovery state."""
         self._tools.clear()
         self._discovered_packages.clear()
+        self._import_errors.clear()
 
     def register_module(self, module: ModuleType) -> list[str]:
         """Register all concrete BaseTool subclasses defined in a module."""
@@ -127,7 +129,14 @@ class ToolRegistry:
         for module_info in pkgutil.walk_packages(package_paths, f"{package.__name__}."):
             if module_info.name.endswith(".base_tool") or module_info.name.endswith(".tool_registry"):
                 continue
-            module = importlib.import_module(module_info.name)
+            try:
+                module = importlib.import_module(module_info.name)
+            except ImportError as exc:
+                # A missing optional dependency (e.g. `requests` for _comfyui)
+                # must not abort discovery of every other tool. Record it so the
+                # preflight can surface the gap as a runtime_warning.
+                self._import_errors[module_info.name] = f"{type(exc).__name__}: {exc}"
+                continue
             discovered.extend(self.register_module(module))
 
         self._discovered_packages.add(package_name)
